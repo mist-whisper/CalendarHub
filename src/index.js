@@ -1,6 +1,13 @@
 /**
  * src/index.js
- * CalendarHub 总指挥脚本：支持多级嵌套目录扫描、自动继承父级 Fetcher
+ * CalendarHub 总指挥脚本
+ * 
+ * 功能亮点：
+ * 1. 递归自动扫描 competitions/ 下的所有嵌套目录 (例如 competitions/euro/euro-2024)
+ * 2. 支持 🟢 实时 (Live) / ⏳ 待定 (Upcoming) / 📦 归档 (Archived) 三种状态模式
+ * 3. 自动根据赛事状态与年份进行智能动态排序 (Live > Upcoming > Archived)
+ * 4. 自动继承父级 Fetcher 抓取脚本，减少重复代码
+ * 5. 自动构建漂亮的 index.html 静态订阅主页 (含 ⚽ 矢量 Favicon)
  */
 
 const fs = require('fs');
@@ -31,7 +38,7 @@ function findAllCompetitionDirs(baseDir) {
         results.push(fullPath);
       }
       
-      // 无论当前目录有没有 config.json，都继续递归往下找子目录（支持深层嵌套）
+      // 递归向下寻找子目录（支持多级嵌套目录）
       results = results.concat(findAllCompetitionDirs(fullPath));
     }
   }
@@ -59,7 +66,6 @@ async function main() {
   const generatedCompetitions = [];
 
   for (const compDir of compDirs) {
-    // 相对路径，用于控制台友好打印 (例如 euro/euro-2024)
     const relativeFolder = path.relative(COMPETITIONS_DIR, compDir);
     const folderName = path.basename(compDir);
     const configPath = path.join(compDir, 'config.json');
@@ -85,7 +91,8 @@ async function main() {
           id: config.id || folderName,
           name: config.name || folderName,
           outputFile,
-          upcoming: true
+          upcoming: true,
+          order: config.order
         });
         successCount++;
         continue;
@@ -121,19 +128,20 @@ async function main() {
             id: config.id || folderName,
             name: config.name || folderName,
             outputFile,
-            archived: true
+            archived: true,
+            order: config.order
           });
 
           successCount++;
           continue;
         } else {
-          console.error(`  ❌ [归档失败] 模块 [${relativeFolder}] 开启了 archived，但目录下找不到对应的 .ics 静态归档文件！`);
+          console.error(`  ❌ [归档失败] 模块 [${relativeFolder}] 开启了 archived，但找不到对应的 .ics 归档文件！`);
           failCount++;
           continue;
         }
       }
 
-      // 3. 动态抓取处理（智能查找 fetcher.js：优先子目录，找不到则自动退回父目录查找）
+      // 3. 动态抓取处理（智能查找 fetcher.js：优先子目录，找不到自动退回父目录）
       let fetcherPath = path.join(compDir, 'fetcher.js');
       if (!fs.existsSync(fetcherPath)) {
         const parentFetcherPath = path.join(path.dirname(compDir), 'fetcher.js');
@@ -169,7 +177,8 @@ async function main() {
         name: config.name || folderName,
         outputFile,
         archived: false,
-        matchCount: matches.length
+        matchCount: matches.length,
+        order: config.order
       });
 
       successCount++;
@@ -179,7 +188,39 @@ async function main() {
     }
   }
 
+  // 2. 智能动态排序逻辑 (Live > Upcoming > Archived，同状态按年份排序)
   if (generatedCompetitions.length > 0) {
+    generatedCompetitions.sort((a, b) => {
+      // ① 手动指定 order 权重最高 (数字越小越靠前)
+      if (a.order !== undefined || b.order !== undefined) {
+        return (a.order ?? 99) - (b.order ?? 99);
+      }
+
+      // ② 状态优先级权重：🟢 实时 (0) > ⏳ 待定 (1) > 📦 归档 (2)
+      const getStatusWeight = (comp) => {
+        if (!comp.upcoming && !comp.archived) return 0;
+        if (comp.upcoming) return 1;
+        return 2;
+      };
+
+      const weightA = getStatusWeight(a);
+      const weightB = getStatusWeight(b);
+
+      if (weightA !== weightB) {
+        return weightA - weightB;
+      }
+
+      // ③ 提取标题中的年份进行同状态二次排序
+      const yearA = parseInt((a.name.match(/\d{4}/) || [0])[0], 10);
+      const yearB = parseInt((b.name.match(/\d{4}/) || [0])[0], 10);
+
+      if (a.archived) {
+        return yearB - yearA; // 归档赛事：按年份倒序，较新的排前面 (如 2026 > 2024)
+      } else {
+        return yearA - yearB; // 实时/待定：按年份正序，最近要踢的排前面 (如 2028 < 2030)
+      }
+    });
+
     generateIndexHtml(generatedCompetitions);
   }
 
@@ -187,6 +228,9 @@ async function main() {
   console.log(`🏁 [CalendarHub] 全量构建完成！成功: ${successCount} 个, 失败: ${failCount} 个`);
 }
 
+/**
+ * 自动生成网页端订阅导航页 index.html
+ */
 function generateIndexHtml(competitions) {
   const htmlPath = path.join(DIST_DIR, 'index.html');
 
