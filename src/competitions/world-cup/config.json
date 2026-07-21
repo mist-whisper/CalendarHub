@@ -1,8 +1,8 @@
 {
   "id": "world-cup",
-  "name": "2026 美加墨世界杯⚽🏆",
+  "name": "2026 美加墨世界杯⚽🏆 (历史存档)",
   "enabled": true,
-  "outputFile": "world-cup.ics",
-  "competitionCode": "WC",
-  "season": 2026
+  "archived": true,
+  "archiveFile": "world-cup-2026.ics",
+  "outputFile": "world-cup.ics"
 }
