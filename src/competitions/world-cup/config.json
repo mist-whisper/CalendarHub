@@ -1,8 +1,0 @@
-{
-  "id": "world-cup",
-  "name": "2030 西葡摩世界杯⚽🏆",
-  "enabled": true,
-  "archived": true,
-  "archiveFile": "world-cup-2026.ics",
-  "outputFile": "world-cup.ics"
-}
