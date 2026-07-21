@@ -14,7 +14,7 @@ const DIST_DIR = path.join(__dirname, '../dist');
 async function main() {
   console.log('🚀 [CalendarHub] 开始构建全量赛事日历...\n');
 
-  // 1. 确保目录 dist/ 存在
+  // 1. 确保产物目录 dist/ 存在
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, { recursive: true });
     console.log(`📁 创建产物目录: ${DIST_DIR}`);
@@ -55,12 +55,6 @@ async function main() {
       continue;
     }
 
-    // 检查必需的抓取模块 fetcher.js
-    if (!fs.existsSync(fetcherPath)) {
-      console.warn(`  ⚠️ 跳过：缺少 fetcher.js 模块`);
-      continue;
-    }
-
     try {
       // 读取配置
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -71,8 +65,33 @@ async function main() {
         continue;
       }
 
+      const outputFile = config.outputFile || `${folder}.ics`;
+      const outputPath = path.join(DIST_DIR, outputFile);
+
+      // 💡 优先拦截归档逻辑：如果是已归档赛事，直接复制本地静态文件到 dist/
+      if (config.archived) {
+        const archiveFile = config.archiveFile || `${folder}-archive.ics`;
+        const archivePath = path.join(compDir, archiveFile);
+
+        if (fs.existsSync(archivePath)) {
+          fs.copyFileSync(archivePath, outputPath);
+          console.log(`  📦 [静态归档] 成功复制归档文件: ${archiveFile} -> dist/${outputFile}`);
+          successCount++;
+          continue; // 处理完毕，直接跳过后续的 API 请求
+        } else {
+          console.warn(`  ⚠️ 开启了归档模式但未找到文件 ${archivePath}，尝试降级为动态抓取...`);
+        }
+      }
+
+      // --- 动态抓取与构建流程 ---
+      // 检查必需的抓取模块 fetcher.js
+      if (!fs.existsSync(fetcherPath)) {
+        console.warn(`  ⚠️ 跳过：缺少 fetcher.js 模块`);
+        continue;
+      }
+
       console.log(`  📌 赛事名称: ${config.name}`);
-      console.log(`  🌐 正在拉取数据...`);
+      console.log(`  🌐 正在拉取动态数据...`);
 
       // 动态导入该赛事的 fetcher 模块
       const fetcher = require(fetcherPath);
@@ -91,9 +110,6 @@ async function main() {
       });
 
       // 6. 写入到 dist/ 对应的 .ics 文件中
-      const outputFile = config.outputFile || `${folder}.ics`;
-      const outputPath = path.join(DIST_DIR, outputFile);
-
       fs.writeFileSync(outputPath, icalContent, 'utf-8');
       console.log(`  🎉 成功生成文件: dist/${outputFile}`);
 
@@ -101,7 +117,6 @@ async function main() {
     } catch (error) {
       failCount++;
       console.error(`  ❌ [构建失败] 模块 [${folder}] 发生错误:`, error.message);
-      // 使用 try-catch 隔离错误，确保单赛事报错不阻塞全局流程
     }
   }
 
