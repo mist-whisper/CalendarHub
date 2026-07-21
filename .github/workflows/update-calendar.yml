@@ -1,0 +1,35 @@
+name: Update Calendar Hub
+
+on:
+  schedule:
+    # 🎯 冷门时间错峰雷达（北京时间每天 00:07 至 14:37，每 30 分钟一次）
+    - cron: '7,37 0-6,16-23 * * *'
+  workflow_dispatch: # 支持手动强刷
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Run Calendar Hub Builder
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: node src/index.js
+
+      - name: Deploy to GitHub Pages / Release Branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          force_orphan: true
