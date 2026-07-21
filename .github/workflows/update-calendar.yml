@@ -2,9 +2,13 @@ name: Update Calendar Hub
 
 on:
   schedule:
-    # 🎯 冷门时间错峰雷达（北京时间每天 00:07 至 14:37，每 30 分钟一次）
+    # 🎯 错峰雷达（每天 00:07 至 14:37，每 30 分钟一次）
     - cron: '7,37 0-6,16-23 * * *'
   workflow_dispatch: # 支持手动强刷
+
+# 🔑 必须显式声明写入权限，彻底规避 403 报错
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22' # 升级至 Node 22，解决 Node 20 废弃警告
 
       - name: Install Dependencies
         run: npm ci || npm install
