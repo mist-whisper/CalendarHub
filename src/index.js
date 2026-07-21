@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * CalendarHub 总指挥脚本：构建全量赛事日历并自动生成 HTML 导航订阅页
+ * CalendarHub 总指挥脚本：支持 归档 / 实时 / 待定 三种状态，并生成精美订阅页
  */
 
 const fs = require('fs');
@@ -15,7 +15,6 @@ async function main() {
 
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, { recursive: true });
-    console.log(`📁 创建产物目录: ${DIST_DIR}`);
   }
 
   if (!fs.existsSync(COMPETITIONS_DIR)) {
@@ -28,14 +27,8 @@ async function main() {
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name);
 
-  if (competitionFolders.length === 0) {
-    console.warn('⚠️ competitions/ 目录下没有任何赛事子文件夹！');
-    return;
-  }
-
   let successCount = 0;
   let failCount = 0;
-  // 💡 用于记录成功构建的赛事元数据，以便生成 index.html
   const generatedCompetitions = [];
 
   for (const folder of competitionFolders) {
@@ -46,10 +39,7 @@ async function main() {
     console.log(`----------------------------------------`);
     console.log(`🔍 正在检查模块: [${folder}]`);
 
-    if (!fs.existsSync(configPath)) {
-      console.warn(`  ⚠️ 跳过：缺少 config.json 配置文件`);
-      continue;
-    }
+    if (!fs.existsSync(configPath)) continue;
 
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -62,7 +52,20 @@ async function main() {
       const outputFile = config.outputFile || `${folder}.ics`;
       const outputPath = path.join(DIST_DIR, outputFile);
 
-      // 1. 静态归档处理
+      // 1. 拦截待定/筹备中赛事 (upcoming: true)
+      if (config.upcoming) {
+        console.log(`  ⏳ [赛程待定] 暂时不开放订阅拉取。`);
+        generatedCompetitions.push({
+          id: config.id || folder,
+          name: config.name || folder,
+          outputFile,
+          upcoming: true
+        });
+        successCount++;
+        continue;
+      }
+
+      // 2. 静态归档处理 (archived: true)
       if (config.archived) {
         const archiveFile = config.archiveFile || `${folder}-archive.ics`;
         const archivePath = path.join(compDir, archiveFile);
@@ -81,15 +84,12 @@ async function main() {
           successCount++;
           continue;
         } else {
-          console.warn(`  ⚠️ 未找到归档文件 ${archivePath}，尝试降级为动态抓取...`);
+          console.warn(`  ⚠️ 未找到归档文件 ${archivePath}，尝试降级处理...`);
         }
       }
 
-      // 2. 动态抓取与构建处理
-      if (!fs.existsSync(fetcherPath)) {
-        console.warn(`  ⚠️ 跳过：缺少 fetcher.js 模块`);
-        continue;
-      }
+      // 3. 动态抓取与构建处理
+      if (!fs.existsSync(fetcherPath)) continue;
 
       console.log(`  📌 赛事名称: ${config.name}`);
       console.log(`  🌐 正在拉取动态数据...`);
@@ -98,8 +98,6 @@ async function main() {
       const matches = typeof fetcher.fetchMatches === 'function'
         ? await fetcher.fetchMatches(config)
         : await fetcher(config);
-
-      console.log(`  ✅ 成功获取 ${matches.length} 场比赛记录`);
 
       const icalContent = buildICalendar({
         calName: config.name,
@@ -124,7 +122,6 @@ async function main() {
     }
   }
 
-  // 3. 自动生成 HTML 订阅主页
   if (generatedCompetitions.length > 0) {
     generateIndexHtml(generatedCompetitions);
   }
@@ -133,16 +130,47 @@ async function main() {
   console.log(`🏁 [CalendarHub] 全量构建完成！成功: ${successCount} 个, 失败: ${failCount} 个`);
 }
 
-/**
- * 自动生成漂亮的 HTML 订阅主页
- */
 function generateIndexHtml(competitions) {
   const htmlPath = path.join(DIST_DIR, 'index.html');
 
   const cardsHtml = competitions.map(comp => {
-    const badge = comp.archived
-      ? `<span class="badge badge-archive">📦 历史归档</span>`
-      : `<span class="badge badge-live">🟢 实时同步 (${comp.matchCount || 0} 场)</span>`;
+    let badge = '';
+    let actionsHtml = '';
+
+    if (comp.upcoming) {
+      badge = `<span class="badge badge-upcoming">⏳ 赛程待定</span>`;
+      actionsHtml = `
+        <button class="btn btn-disabled" disabled>
+          🔒 预选赛/抽签中 · 暂未开放订阅
+        </button>
+      `;
+    } else if (comp.archived) {
+      badge = `<span class="badge badge-archive">📦 历史归档</span>`;
+      actionsHtml = `
+        <a class="btn btn-primary btn-webcal" href="#" target="_blank">
+          📅 一键唤起系统日历 (webcal)
+        </a>
+        <button class="btn btn-secondary btn-copy">
+          📋 复制订阅链接
+        </button>
+        <a class="btn btn-link btn-download" href="./${comp.outputFile}" download>
+          ⬇️ 下载 .ics 文件
+        </a>
+      `;
+    } else {
+      badge = `<span class="badge badge-live">🟢 实时同步 (${comp.matchCount || 0} 场)</span>`;
+      actionsHtml = `
+        <a class="btn btn-primary btn-webcal" href="#" target="_blank">
+          📅 一键唤起系统日历 (webcal)
+        </a>
+        <button class="btn btn-secondary btn-copy">
+          📋 复制订阅链接
+        </button>
+        <a class="btn btn-link btn-download" href="./${comp.outputFile}" download>
+          ⬇️ 下载 .ics 文件
+        </a>
+      `;
+    }
 
     return `
       <div class="card" data-filename="${comp.outputFile}">
@@ -152,15 +180,7 @@ function generateIndexHtml(competitions) {
         </div>
         <p class="file-info">订阅文件：<code>${comp.outputFile}</code></p>
         <div class="card-actions">
-          <a class="btn btn-primary btn-webcal" href="#" target="_blank">
-            📅 一键唤起系统日历 (webcal)
-          </a>
-          <button class="btn btn-secondary btn-copy">
-            📋 复制订阅链接
-          </button>
-          <a class="btn btn-link btn-download" href="./${comp.outputFile}" download>
-            ⬇️ 下载 .ics 文件
-          </a>
+          ${actionsHtml}
         </div>
       </div>
     `;
@@ -172,10 +192,7 @@ function generateIndexHtml(competitions) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CalendarHub - 体育赛事日历订阅中心</title>
-
-  <!-- ⚽ 足球 Emoji 动态 Favicon (SVG Data URI) -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚽</text></svg>">
-
   <style>
     :root {
       --bg-color: #0f172a;
@@ -188,6 +205,7 @@ function generateIndexHtml(competitions) {
       --secondary-hover: #475569;
       --accent-green: #22c55e;
       --accent-amber: #f59e0b;
+      --accent-slate: #64748b;
       --border-color: #334155;
     }
 
@@ -279,6 +297,11 @@ function generateIndexHtml(competitions) {
       color: var(--accent-amber);
       border: 1px solid rgba(245, 158, 11, 0.3);
     }
+    .badge-upcoming {
+      background-color: rgba(100, 116, 139, 0.2);
+      color: var(--accent-slate);
+      border: 1px solid rgba(100, 116, 139, 0.4);
+    }
 
     .file-info {
       font-size: 0.875rem;
@@ -323,6 +346,13 @@ function generateIndexHtml(competitions) {
     }
     .btn-secondary:hover { background-color: var(--secondary-hover); }
 
+    .btn-disabled {
+      background-color: rgba(51, 65, 85, 0.5);
+      color: var(--text-muted);
+      border: 1px dashed var(--border-color);
+      cursor: not-allowed;
+    }
+
     .btn-link {
       background: transparent;
       color: var(--text-muted);
@@ -365,7 +395,6 @@ function generateIndexHtml(competitions) {
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      // 动态获取当前页面的基础 URL 路径
       const origin = window.location.origin;
       const pathname = window.location.pathname.replace(/\\/index\\.html$/, '').replace(/\\/$/, '');
       const httpBaseUrl = origin + pathname;
@@ -379,19 +408,16 @@ function generateIndexHtml(competitions) {
         setTimeout(() => toast.classList.remove('show'), 2500);
       }
 
-      // 遍历所有卡片，绑定全动态的 webcal:// 和复制事件
       document.querySelectorAll('.card').forEach(card => {
         const fileName = card.dataset.filename;
         const httpUrl = \`\${httpBaseUrl}/\${fileName}\`;
         const webcalUrl = \`\${webcalBaseUrl}/\${fileName}\`;
 
-        // 1. 设置 webcal 一键唤起链接
         const webcalBtn = card.querySelector('.btn-webcal');
         if (webcalBtn) {
           webcalBtn.href = webcalUrl;
         }
 
-        // 2. 设置复制按钮逻辑
         const copyBtn = card.querySelector('.btn-copy');
         if (copyBtn) {
           copyBtn.addEventListener('click', () => {
