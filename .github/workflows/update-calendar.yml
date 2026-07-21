@@ -1,9 +1,9 @@
 name: Update Calendar Hub
 
 on:
-  schedule:
+  #schedule:
     # 🎯 错峰雷达（每天 00:07 至 14:37，每 30 分钟一次）
-    - cron: '7,37 0-6,16-23 * * *'
+    #- cron: '7,37 0-6,16-23 * * *'
   workflow_dispatch: # 支持手动强刷
 
 # 🔑 必须显式声明写入权限，彻底规避 403 报错
