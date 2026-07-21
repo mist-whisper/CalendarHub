@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * CalendarHub 总指挥脚本：支持 归档 / 实时 / 待定 三种状态，并生成精美订阅页
+ * CalendarHub 总指挥脚本：支持多级嵌套目录扫描、自动继承父级 Fetcher
  */
 
 const fs = require('fs');
@@ -10,6 +10,35 @@ const { buildICalendar } = require('./core/ical-builder');
 const COMPETITIONS_DIR = path.join(__dirname, 'competitions');
 const DIST_DIR = path.join(__dirname, '../dist');
 
+/**
+ * 递归扫描指定目录下的所有赛事目录（只要包含 config.json 即视为一个赛事模块）
+ * @param {string} baseDir 扫描起始路径
+ * @returns {Array<string>} 所有包含 config.json 的绝对路径列表
+ */
+function findAllCompetitionDirs(baseDir) {
+  let results = [];
+  if (!fs.existsSync(baseDir)) return results;
+
+  const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const fullPath = path.join(baseDir, entry.name);
+      const configPath = path.join(fullPath, 'config.json');
+
+      // 如果当前目录下直接有 config.json，说明是一个具体的赛事模块
+      if (fs.existsSync(configPath)) {
+        results.push(fullPath);
+      }
+      
+      // 无论当前目录有没有 config.json，都继续递归往下找子目录（支持深层嵌套）
+      results = results.concat(findAllCompetitionDirs(fullPath));
+    }
+  }
+
+  return results;
+}
+
 async function main() {
   console.log('🚀 [CalendarHub] 开始构建全量赛事日历...\n');
 
@@ -17,32 +46,26 @@ async function main() {
     fs.mkdirSync(DIST_DIR, { recursive: true });
   }
 
-  if (!fs.existsSync(COMPETITIONS_DIR)) {
-    console.error(`❌ [错误] 找不到 competitions 目录: ${COMPETITIONS_DIR}`);
-    process.exit(1);
-  }
+  // 1. 递归扫描获取所有赛事模块路径
+  const compDirs = findAllCompetitionDirs(COMPETITIONS_DIR);
 
-  const entries = fs.readdirSync(COMPETITIONS_DIR, { withFileTypes: true });
-  const competitionFolders = entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name);
+  if (compDirs.length === 0) {
+    console.warn('⚠️ competitions/ 目录下未扫描到任何包含 config.json 的赛事模块！');
+    return;
+  }
 
   let successCount = 0;
   let failCount = 0;
   const generatedCompetitions = [];
 
-  for (const folder of competitionFolders) {
-    const compDir = path.join(COMPETITIONS_DIR, folder);
+  for (const compDir of compDirs) {
+    // 相对路径，用于控制台友好打印 (例如 euro/euro-2024)
+    const relativeFolder = path.relative(COMPETITIONS_DIR, compDir);
+    const folderName = path.basename(compDir);
     const configPath = path.join(compDir, 'config.json');
-    const fetcherPath = path.join(compDir, 'fetcher.js');
 
     console.log(`----------------------------------------`);
-    console.log(`🔍 正在检查模块: [${folder}]`);
-
-    if (!fs.existsSync(configPath)) {
-      console.warn(`  ⚠️ 跳过：模块 [${folder}] 缺少 config.json 配置文件`);
-      continue;
-    }
+    console.log(`🔍 正在检查模块: [${relativeFolder}]`);
 
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -52,15 +75,15 @@ async function main() {
         continue;
       }
 
-      const outputFile = config.outputFile || `${folder}.ics`;
+      const outputFile = config.outputFile || `${folderName}.ics`;
       const outputPath = path.join(DIST_DIR, outputFile);
 
       // 1. 拦截待定/筹备中赛事 (upcoming: true)
       if (config.upcoming) {
         console.log(`  ⏳ [赛程待定] 暂时不开放订阅拉取。`);
         generatedCompetitions.push({
-          id: config.id || folder,
-          name: config.name || folder,
+          id: config.id || folderName,
+          name: config.name || folderName,
           outputFile,
           upcoming: true
         });
@@ -70,11 +93,10 @@ async function main() {
 
       // 2. 静态归档处理 (archived: true)
       if (config.archived) {
-        // 自动容错：如果未指定 archiveFile，优先尝试 <folder>.ics，再尝试 <folder>-archive.ics
         const possibleArchiveFiles = [
           config.archiveFile,
-          `${folder}.ics`,
-          `${folder}-archive.ics`,
+          `${folderName}.ics`,
+          `${folderName}-archive.ics`,
           'world-cup.ics',
           'euro.ics'
         ].filter(Boolean);
@@ -96,8 +118,8 @@ async function main() {
           console.log(`  📦 [静态归档] 成功复制归档文件: ${actualArchiveFileName} -> dist/${outputFile}`);
           
           generatedCompetitions.push({
-            id: config.id || folder,
-            name: config.name || folder,
+            id: config.id || folderName,
+            name: config.name || folderName,
             outputFile,
             archived: true
           });
@@ -105,15 +127,24 @@ async function main() {
           successCount++;
           continue;
         } else {
-          console.error(`  ❌ [归档失败] 模块 [${folder}] 开启了 archived，但目录下找不到任何 .ics 归档文件！`);
+          console.error(`  ❌ [归档失败] 模块 [${relativeFolder}] 开启了 archived，但目录下找不到对应的 .ics 静态归档文件！`);
           failCount++;
-          continue; // 明确提示错误并跳过
+          continue;
         }
       }
 
-      // 3. 动态抓取与构建处理
+      // 3. 动态抓取处理（智能查找 fetcher.js：优先子目录，找不到则自动退回父目录查找）
+      let fetcherPath = path.join(compDir, 'fetcher.js');
       if (!fs.existsSync(fetcherPath)) {
-        console.warn(`  ⚠️ 跳过：模块 [${folder}] 既非归档/待定，又缺少 fetcher.js 抓取脚本`);
+        const parentFetcherPath = path.join(path.dirname(compDir), 'fetcher.js');
+        if (fs.existsSync(parentFetcherPath)) {
+          fetcherPath = parentFetcherPath;
+          console.log(`  💡 自动继承父级抓取脚本: ${path.relative(COMPETITIONS_DIR, parentFetcherPath)}`);
+        }
+      }
+
+      if (!fs.existsSync(fetcherPath)) {
+        console.warn(`  ⚠️ 跳过：模块 [${relativeFolder}] 既非归档/待定，又未找到 fetcher.js 脚本`);
         continue;
       }
 
@@ -134,8 +165,8 @@ async function main() {
       console.log(`  🎉 成功生成文件: dist/${outputFile}`);
 
       generatedCompetitions.push({
-        id: config.id || folder,
-        name: config.name || folder,
+        id: config.id || folderName,
+        name: config.name || folderName,
         outputFile,
         archived: false,
         matchCount: matches.length
@@ -144,7 +175,7 @@ async function main() {
       successCount++;
     } catch (error) {
       failCount++;
-      console.error(`  ❌ [解析/构建失败] 模块 [${folder}] 发生错误:`, error.message);
+      console.error(`  ❌ [解析/构建失败] 模块 [${relativeFolder}] 发生错误:`, error.message);
     }
   }
 
