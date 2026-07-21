@@ -1,0 +1,14 @@
+{
+  "name": "calendar-hub",
+  "version": "1.0.0",
+  "description": "动态 iCal 日历中心",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
