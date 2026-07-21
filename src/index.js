@@ -39,7 +39,10 @@ async function main() {
     console.log(`----------------------------------------`);
     console.log(`🔍 正在检查模块: [${folder}]`);
 
-    if (!fs.existsSync(configPath)) continue;
+    if (!fs.existsSync(configPath)) {
+      console.warn(`  ⚠️ 跳过：模块 [${folder}] 缺少 config.json 配置文件`);
+      continue;
+    }
 
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -67,12 +70,30 @@ async function main() {
 
       // 2. 静态归档处理 (archived: true)
       if (config.archived) {
-        const archiveFile = config.archiveFile || `${folder}-archive.ics`;
-        const archivePath = path.join(compDir, archiveFile);
+        // 自动容错：如果未指定 archiveFile，优先尝试 <folder>.ics，再尝试 <folder>-archive.ics
+        const possibleArchiveFiles = [
+          config.archiveFile,
+          `${folder}.ics`,
+          `${folder}-archive.ics`,
+          'world-cup.ics',
+          'euro.ics'
+        ].filter(Boolean);
 
-        if (fs.existsSync(archivePath)) {
-          fs.copyFileSync(archivePath, outputPath);
-          console.log(`  📦 [静态归档] 成功复制归档文件: ${archiveFile} -> dist/${outputFile}`);
+        let foundArchivePath = null;
+        let actualArchiveFileName = '';
+
+        for (const fileName of possibleArchiveFiles) {
+          const testPath = path.join(compDir, fileName);
+          if (fs.existsSync(testPath)) {
+            foundArchivePath = testPath;
+            actualArchiveFileName = fileName;
+            break;
+          }
+        }
+
+        if (foundArchivePath) {
+          fs.copyFileSync(foundArchivePath, outputPath);
+          console.log(`  📦 [静态归档] 成功复制归档文件: ${actualArchiveFileName} -> dist/${outputFile}`);
           
           generatedCompetitions.push({
             id: config.id || folder,
@@ -84,12 +105,17 @@ async function main() {
           successCount++;
           continue;
         } else {
-          console.warn(`  ⚠️ 未找到归档文件 ${archivePath}，尝试降级处理...`);
+          console.error(`  ❌ [归档失败] 模块 [${folder}] 开启了 archived，但目录下找不到任何 .ics 归档文件！`);
+          failCount++;
+          continue; // 明确提示错误并跳过
         }
       }
 
       // 3. 动态抓取与构建处理
-      if (!fs.existsSync(fetcherPath)) continue;
+      if (!fs.existsSync(fetcherPath)) {
+        console.warn(`  ⚠️ 跳过：模块 [${folder}] 既非归档/待定，又缺少 fetcher.js 抓取脚本`);
+        continue;
+      }
 
       console.log(`  📌 赛事名称: ${config.name}`);
       console.log(`  🌐 正在拉取动态数据...`);
@@ -118,7 +144,7 @@ async function main() {
       successCount++;
     } catch (error) {
       failCount++;
-      console.error(`  ❌ [构建失败] 模块 [${folder}] 发生错误:`, error.message);
+      console.error(`  ❌ [解析/构建失败] 模块 [${folder}] 发生错误:`, error.message);
     }
   }
 
