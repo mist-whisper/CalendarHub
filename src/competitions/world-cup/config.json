@@ -1,0 +1,8 @@
+{
+  "id": "world-cup",
+  "name": "2026 美加墨世界杯⚽🏆",
+  "enabled": true,
+  "outputFile": "world-cup.ics",
+  "competitionCode": "WC",
+  "season": 2026
+}
