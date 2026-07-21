@@ -1,8 +1,0 @@
-{
-  "id": "euro",
-  "name": "2028 欧洲杯⚽🇪🇺",
-  "enabled": true,
-  "outputFile": "euro.ics",
-  "competitionCode": "EC",
-  "season": 2028
-}
